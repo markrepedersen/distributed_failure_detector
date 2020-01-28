@@ -57,7 +57,6 @@ public class Responder extends Thread {
       byte[] buf = new byte[MESSAGE_SIZE_IN_BYTES];
       DatagramPacket packet = new DatagramPacket(buf, buf.length);
       try {
-        System.out.println("Responder receiving...");
         this.socket.receive(packet);
         ByteBuffer response = ByteBuffer.wrap(packet.getData());
         if (response.capacity() == MESSAGE_SIZE_IN_BYTES) {
@@ -124,7 +123,6 @@ public class Responder extends Thread {
   // thrown.
   // If any other problem is detected then the FailureDectorException is thrown
   public void startResponding() throws FailureDetectorException, SocketException {
-    System.out.println("Called start responding.");
     if (isResponding(this.port, this.addr)) {
       throw new FailureDetectorException("Already running.");
     } else {
@@ -139,7 +137,6 @@ public class Responder extends Thread {
   // subsequent
   // startResponding call is made.
   public void stopResponding() {
-    System.out.println("Called stop responding.");
     this.isResponding = false;
   }
 }

@@ -4,6 +4,7 @@ import java.net.InetAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
+import java.util.HashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 
 public class Monitor implements Runnable {
@@ -21,6 +22,7 @@ public class Monitor implements Runnable {
   // Monitor
   String name;
 
+  private HashMap<Integer, Long> rttLookUp;
   private DatagramSocket socket;
   private int numHeartbeats;
   private double lastRoundTripTime;
@@ -88,11 +90,13 @@ public class Monitor implements Runnable {
     this.lostMessageCount = 0;
     this.numHeartbeats = 0;
     this.socket = new DatagramSocket(lport, laddr);
+    this.rttLookUp = new HashMap<>();
   }
 
-  private void setSocketTimeout() {
+  private void setSocketTimeout(long seqNum) {
     try {
-      int rtt = this.estimateRTT();
+      int rtt = this.estimateRTT(seqNum);
+      System.out.println("New socket timeout: " + rtt);
       socket.setSoTimeout(rtt);
     } catch (Exception e) {
       System.out.println(e.getMessage());
@@ -103,17 +107,24 @@ public class Monitor implements Runnable {
     while (this.isMonitoring) {
       try {
         DatagramPacket response = this.createPacket(raddr, rport);
-        this.setSocketTimeout();
+        if (this.numHeartbeats <= 1) {
+          this.lastRoundTripTime = 3000;
+          socket.setSendBufferSize(3000);
+        }
         socket.receive(response);
-
         ByteBuffer data = ByteBuffer.wrap(response.getData());
 
         if (response.getLength() == BUFFER_SIZE_IN_BYTES) {
           long epoch = data.getLong();
-          long sequenceNumber = data.getLong();
+          long dataSeqNum = data.getLong();
 
-          System.out.println("ACK received with epoch: " + epoch + ", sequence number: " + sequenceNumber);
-          if (epoch != eNonce || sequenceNumber != this.sequenceNumber) {
+          System.out.println("ACK received with epoch: " + epoch + ", sequence number: " + dataSeqNum);
+          if (this.rttLookUp.containsKey(dataSeqNum)) {
+            this.lostMessageCount = 0;
+          }
+          this.setSocketTimeout(dataSeqNum);
+
+          if (epoch != eNonce || dataSeqNum != this.sequenceNumber) {
             continue;
           }
           this.lostMessageCount = 0;
@@ -143,16 +154,20 @@ public class Monitor implements Runnable {
     if (this.lostMessageCount >= this.threshHold) {
       clq.add(this);
       this.lostMessageCount = 0;
+      this.numHeartbeats = 0;
+      this.rttLookUp.clear();
     }
   }
 
-  private int estimateRTT() {
-    if (this.numHeartbeats <= 1) {
-      this.lastRoundTripTime = 3000;
-      return 3000;
+  private int estimateRTT(long seqNum) {
+    if (this.rttLookUp.containsKey(seqNum)) {
+      long lastAckSentTime = this.rttLookUp.get(seqNum);
+      long currentRTT = (this.lastAckReceivedInMs - lastAckSentTime);
+      int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
+      this.lastRoundTripTime = newRTT;
+      return newRTT;
     }
-
-    long currentRTT = (this.lastAckReceivedInMs - this.lastAckSentInMs);
+    long currentRTT = (this.lastAckReceivedInMs - this.lastAckReceivedInMs);
     int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
     this.lastRoundTripTime = newRTT;
     return newRTT;
@@ -176,6 +191,7 @@ public class Monitor implements Runnable {
 
     this.numHeartbeats++;
     this.lastAckSentInMs = System.currentTimeMillis();
+    this.rttLookUp.put(this.sequenceNumber, this.lastAckSentInMs);
     try {
       System.out.println("Monitor sending heartbeat with epoch: " + eNonce + ", sequence number: " + sequenceNumber);
       socket.send(packet);
