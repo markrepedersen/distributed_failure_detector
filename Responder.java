@@ -11,7 +11,7 @@ import java.util.Map;
 
 public class Responder extends Thread {
   private static final int MESSAGE_SIZE_IN_BYTES = 16;
-  private static final Map<K, V> responders = new HashMap<InetAddress, Map<Integer, Boolean>>();
+  private static final Map<InetAddress, Map<Integer, Boolean>> responders = new HashMap<InetAddress, Map<Integer, Boolean>>();
 
   private DatagramSocket socket;
   private int port;
@@ -45,6 +45,7 @@ public class Responder extends Thread {
       throw new SocketException("Port is not available.");
     }
 
+    this.socket = new DatagramSocket(this.port, this.addr);
     var map = new HashMap<Integer, Boolean>();
     map.put(port, false);
     responders.put(addr, map);
@@ -53,21 +54,25 @@ public class Responder extends Thread {
   @Override
   public void run() {
     while (this.isResponding) {
-      byte[] buf = new byte[1024];
+      byte[] buf = new byte[MESSAGE_SIZE_IN_BYTES];
       DatagramPacket packet = new DatagramPacket(buf, buf.length);
+      try {
+        System.out.println("Responder receiving...");
+        this.socket.receive(packet);
+        ByteBuffer response = ByteBuffer.wrap(packet.getData());
+        if (response.capacity() == MESSAGE_SIZE_IN_BYTES) {
+          long epochNonce = response.getLong();
+          long seqNumber = response.getLong();
 
-      this.socket = new DatagramSocket(this.port, this.addr);
-      this.socket.receive(packet);
+          System.out.println("Heartbeat received with epoch: " + epochNonce + ", sequence number: " + seqNumber);
 
-      ByteBuffer response = ByteBuffer.wrap(packet.getData());
+          InetAddress responseAddress = packet.getAddress();
+          int responsePort = packet.getPort();
 
-      if (response.capacity() == MESSAGE_SIZE_IN_BYTES) {
-        long epochNonce = response.getLong();
-        long seqNumber = response.getLong();
-        InetAddress responseAddress = packet.getAddress();
-        int responsePort = packet.getPort();
-
-        this.sendAck(epochNonce, seqNumber, responsePort, responseAddress);
+          this.sendAck(epochNonce, seqNumber, responsePort, responseAddress);
+        }
+      } catch (Exception e) {
+        System.out.println(e.getMessage());
       }
     }
   }
@@ -90,6 +95,7 @@ public class Responder extends Thread {
 
   public static boolean isPortAvailable(int port, InetAddress addr) {
     try (var ds = new DatagramSocket(port, addr)) {
+      ds.close();
       return true;
     } catch (IOException e) {
       return false;
@@ -103,7 +109,11 @@ public class Responder extends Thread {
     buffer.rewind();
     DatagramPacket ack = new DatagramPacket(buffer.array(), buffer.limit(), address, port);
 
-    socket.send(ack);
+    try {
+      System.out.println("Responder sending ACK with epoch " + epochNonce + ", sequence number: " + seqNumber);
+      socket.send(ack);
+    } catch (Exception e) {
+    }
   }
 
   // Prior to this method being invoked all heartbeat messages are
@@ -114,12 +124,14 @@ public class Responder extends Thread {
   // thrown.
   // If any other problem is detected then the FailureDectorException is thrown
   public void startResponding() throws FailureDetectorException, SocketException {
+    System.out.println("Called start responding.");
     if (isResponding(this.port, this.addr)) {
       throw new FailureDetectorException("Already running.");
     } else {
       responders.get(this.addr).replace(this.port, true);
     }
     this.isResponding = true;
+    this.setDaemon(true);
     this.start();
   }
 
@@ -127,6 +139,7 @@ public class Responder extends Thread {
   // subsequent
   // startResponding call is made.
   public void stopResponding() {
+    System.out.println("Called stop responding.");
     this.isResponding = false;
   }
 }

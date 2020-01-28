@@ -1,14 +1,13 @@
+import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
 
-public class Monitor extends Runnable {
+public class Monitor implements Runnable {
   // The reserved nonce value;
   public static final long RESERVED_NONCE = -1;
 
@@ -24,11 +23,10 @@ public class Monitor extends Runnable {
   String name;
 
   private DatagramSocket socket;
-  private int currentRTT;
-  private List<Integer> roundTripTimes;
   private int numHeartbeats;
-  private int lastAckReceivedInMs;
-  private int lastAckSentInMs;
+  private double lastRoundTripTime;
+  private long lastAckReceivedInMs;
+  private long lastAckSentInMs;
   private int lostMessageCount;
   private int sequenceNumber;
   private int lport;
@@ -90,16 +88,17 @@ public class Monitor extends Runnable {
     this.sequenceNumber = 0;
     this.lostMessageCount = 0;
     this.numHeartbeats = 0;
-    this.roundTripTimes = new ArrayList<>();
-
-    if (!this.isPortAvailable(lport, laddr)) {
-      throw new SocketException("Port on this interface is already in use.");
-    }
+    this.socket = new DatagramSocket(lport, laddr);
   }
 
   private void setSocketTimeout() {
-    int rtt = this.estimateRTT();
-    socket.setSoTimeout(rtt);
+    try {
+      int rtt = this.estimateRTT();
+      System.out.println("Setting monitor socket timeout to " + rtt);
+      socket.setSoTimeout(rtt);
+    } catch (Exception e) {
+      System.out.println(e.getMessage());
+    }
   }
 
   private void waitForAck() {
@@ -107,6 +106,7 @@ public class Monitor extends Runnable {
       try {
         DatagramPacket response = this.createPacket(raddr, rport);
         this.setSocketTimeout();
+        System.out.println("Monitor receiving...");
         socket.receive(response);
 
         ByteBuffer data = ByteBuffer.wrap(response.getData());
@@ -115,37 +115,50 @@ public class Monitor extends Runnable {
           long epoch = data.getLong();
           long sequenceNumber = data.getLong();
 
+          System.out.println("ACK received with epoch: " + epoch + ", sequence number: " + sequenceNumber);
           if (epoch != eNonce || sequenceNumber != this.sequenceNumber) {
             continue;
           }
+          this.lostMessageCount = 0;
           this.lastAckReceivedInMs = System.currentTimeMillis();
         }
-      } catch (SocketTimeoutException exception) {
-        this.lostMessageCount++;
-        break;
+      } catch (Exception exception) {
+        System.out.println(exception.getMessage());
+        if (exception instanceof SocketTimeoutException) {
+          this.lostMessageCount++;
+          break;
+        }
       }
     }
   }
 
   @Override
   public void run() {
-    if (!this.isInitialized()) {
-      throw new FailureDetectorException("Not initialized.");
-    }
     while (this.isMonitoring && this.lostMessageCount <= (this.threshHold - 1)) {
-      this.socket = new DatagramSocket(lport, laddr);
-      this.sendHeartbeat();
-      this.waitForAck();
+      System.out.println("Lost message count: " + this.lostMessageCount + ", threshold: " + this.threshHold);
+      try {
+        this.sendHeartbeat();
+        this.waitForAck();
+      } catch (Exception e) {
+        System.out.println(e.getMessage());
+      }
+    }
+    if (this.lostMessageCount >= this.threshHold) {
+      clq.add(this);
+      this.lostMessageCount = 0;
     }
   }
 
-  private double estimateRTT() {
+  private int estimateRTT() {
     if (this.numHeartbeats <= 1) {
+      this.lastRoundTripTime = 3000;
       return 3000;
     }
-    this.roundTripTimes.add(this.lastAckReceivedInMs - this.lastAckSentInMs);
-    var stats = roundTripTimes.stream().mapToInt(Integer::intValue).summaryStatistics();
-    return stats.getAverage();
+    System.out.println("Last RTT: " + this.lastRoundTripTime);
+    long currentRTT = (this.lastAckReceivedInMs - this.lastAckSentInMs);
+    int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
+    this.lastRoundTripTime = newRTT;
+    return newRTT;
   }
 
   private DatagramPacket createPacket(InetAddress address, int port) {
@@ -166,7 +179,12 @@ public class Monitor extends Runnable {
 
     this.numHeartbeats++;
     this.lastAckSentInMs = System.currentTimeMillis();
-    socket.send(packet);
+    try {
+      System.out.println("Monitor sending heartbeat with epoch: " + eNonce + ", sequence number: " + sequenceNumber);
+      socket.send(packet);
+    } catch (Exception e) {
+      System.out.println(e.getMessage());
+    }
     this.sequenceNumber++;
   }
 
@@ -174,9 +192,14 @@ public class Monitor extends Runnable {
   // If monitroing is currently in progress then the threshold value is
   // set to this new value. Note: this call does not block.
   public void startMonitoring(int threshold) throws FailureDetectorException {
+    System.out.println("Called start monitoring.");
+    if (!this.isInitialized()) {
+      throw new FailureDetectorException("Not initialized.");
+    }
     this.isMonitoring = true;
     this.threshHold = threshold;
     Thread thread = new Thread(this);
+    thread.setDaemon(true);
     thread.start();
   }
 
@@ -193,6 +216,6 @@ public class Monitor extends Runnable {
   }
 
   private boolean isInitialized() {
-    return eNonce == RESERVED_NONCE;
+    return eNonce != RESERVED_NONCE;
   }
 }
