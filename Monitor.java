@@ -1,4 +1,3 @@
-import java.io.IOException;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
@@ -94,7 +93,6 @@ public class Monitor implements Runnable {
   private void setSocketTimeout() {
     try {
       int rtt = this.estimateRTT();
-      System.out.println("Setting monitor socket timeout to " + rtt);
       socket.setSoTimeout(rtt);
     } catch (Exception e) {
       System.out.println(e.getMessage());
@@ -106,12 +104,11 @@ public class Monitor implements Runnable {
       try {
         DatagramPacket response = this.createPacket(raddr, rport);
         this.setSocketTimeout();
-        System.out.println("Monitor receiving...");
         socket.receive(response);
 
         ByteBuffer data = ByteBuffer.wrap(response.getData());
 
-        if (data.capacity() == BUFFER_SIZE_IN_BYTES) {
+        if (response.getLength() == BUFFER_SIZE_IN_BYTES) {
           long epoch = data.getLong();
           long sequenceNumber = data.getLong();
 
@@ -154,7 +151,7 @@ public class Monitor implements Runnable {
       this.lastRoundTripTime = 3000;
       return 3000;
     }
-    System.out.println("Last RTT: " + this.lastRoundTripTime);
+
     long currentRTT = (this.lastAckReceivedInMs - this.lastAckSentInMs);
     int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
     this.lastRoundTripTime = newRTT;
@@ -192,7 +189,6 @@ public class Monitor implements Runnable {
   // If monitroing is currently in progress then the threshold value is
   // set to this new value. Note: this call does not block.
   public void startMonitoring(int threshold) throws FailureDetectorException {
-    System.out.println("Called start monitoring.");
     if (!this.isInitialized()) {
       throw new FailureDetectorException("Not initialized.");
     }
