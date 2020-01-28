@@ -22,14 +22,14 @@ public class Monitor implements Runnable {
   // Monitor
   String name;
 
-  private HashMap<Integer, Long> rttLookUp;
+  private HashMap<Long, Long> rttLookUp;
   private DatagramSocket socket;
   private int numHeartbeats;
   private double lastRoundTripTime;
   private long lastAckReceivedInMs;
   private long lastAckSentInMs;
   private int lostMessageCount;
-  private int sequenceNumber;
+  private long sequenceNumber;
   private int lport;
   private InetAddress laddr;
   private int rport;
@@ -105,11 +105,13 @@ public class Monitor implements Runnable {
 
   private void waitForAck() {
     while (this.isMonitoring) {
+      System.out.println("Lost message count: " + this.lostMessageCount + ", threshold: " + this.threshHold);
       try {
         DatagramPacket response = this.createPacket(raddr, rport);
         if (this.numHeartbeats <= 1) {
           this.lastRoundTripTime = 3000;
-          socket.setSendBufferSize(3000);
+          this.lastAckReceivedInMs = this.lastAckSentInMs + 3000;
+          socket.setSoTimeout(3000);
         }
         socket.receive(response);
         ByteBuffer data = ByteBuffer.wrap(response.getData());
@@ -119,12 +121,12 @@ public class Monitor implements Runnable {
           long dataSeqNum = data.getLong();
 
           System.out.println("ACK received with epoch: " + epoch + ", sequence number: " + dataSeqNum);
-          if (this.rttLookUp.containsKey(dataSeqNum)) {
+          if (epoch == eNonce && this.rttLookUp.containsKey(dataSeqNum)) {
             this.lostMessageCount = 0;
           }
           this.setSocketTimeout(dataSeqNum);
-
-          if (epoch != eNonce || dataSeqNum != this.sequenceNumber) {
+          if (epoch != eNonce || !this.rttLookUp.containsKey(dataSeqNum)) {
+            System.out.println("Bad message received!");
             continue;
           }
           this.lostMessageCount = 0;
@@ -143,7 +145,6 @@ public class Monitor implements Runnable {
   @Override
   public void run() {
     while (this.isMonitoring && this.lostMessageCount <= (this.threshHold - 1)) {
-      System.out.println("Lost message count: " + this.lostMessageCount + ", threshold: " + this.threshHold);
       try {
         this.sendHeartbeat();
         this.waitForAck();
@@ -167,7 +168,7 @@ public class Monitor implements Runnable {
       this.lastRoundTripTime = newRTT;
       return newRTT;
     }
-    long currentRTT = (this.lastAckReceivedInMs - this.lastAckReceivedInMs);
+    long currentRTT = (this.lastAckReceivedInMs - this.lastAckSentInMs);
     int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
     this.lastRoundTripTime = newRTT;
     return newRTT;
