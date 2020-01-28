@@ -22,19 +22,19 @@ public class Monitor implements Runnable {
   // Monitor
   String name;
 
-  private HashMap<Long, Long> rttLookUp;
+  private volatile HashMap<Long, Long> rttLookUp;
   private DatagramSocket socket;
-  private int numHeartbeats;
-  private double lastRoundTripTime;
-  private long lastAckReceivedInMs;
-  private long lastAckSentInMs;
-  private int lostMessageCount;
-  private long sequenceNumber;
+  private volatile int numHeartbeats;
+  private volatile double lastRoundTripTime;
+  private volatile long lastAckReceivedInMs;
+  private volatile long lastAckSentInMs;
+  private volatile int lostMessageCount;
+  private volatile long sequenceNumber;
   private int lport;
   private InetAddress laddr;
   private int rport;
   private InetAddress raddr;
-  private boolean isMonitoring;
+  private volatile boolean isMonitoring;
 
   static long eNonce = RESERVED_NONCE;
   int threshHold;
@@ -104,7 +104,7 @@ public class Monitor implements Runnable {
   }
 
   private void waitForAck() {
-    while (this.isMonitoring) {
+    while (isMonitoringAll && this.isMonitoring) {
       System.out.println("Lost message count: " + this.lostMessageCount + ", threshold: " + this.threshHold);
       try {
         DatagramPacket response = this.createPacket(raddr, rport);
@@ -144,7 +144,7 @@ public class Monitor implements Runnable {
 
   @Override
   public void run() {
-    while (this.isMonitoring && this.lostMessageCount <= (this.threshHold - 1)) {
+    while (isMonitoringAll && this.isMonitoring && this.lostMessageCount <= (this.threshHold - 1)) {
       try {
         this.sendHeartbeat();
         this.waitForAck();
@@ -158,23 +158,24 @@ public class Monitor implements Runnable {
       this.numHeartbeats = 0;
       this.rttLookUp.clear();
     }
+    if (!isMonitoringAll) {
+      this.isMonitoring = false;
+    }
   }
 
   private int estimateRTT(long seqNum) {
     if (this.rttLookUp.containsKey(seqNum)) {
       long lastAckSentTime = this.rttLookUp.get(seqNum);
-
       if (lastAckSentTime > this.lastAckReceivedInMs) {
-        this.lastAckReceivedInMs = 1000;
+        this.lastAckReceivedInMs = this.lastAckSentInMs + 1000;
       }
       long currentRTT = (this.lastAckReceivedInMs - lastAckSentTime);
       int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
       this.lastRoundTripTime = newRTT;
       return newRTT;
     }
-
     if (this.lastAckSentInMs > this.lastAckReceivedInMs) {
-      this.lastAckReceivedInMs = 1000;
+      this.lastAckReceivedInMs = this.lastAckSentInMs + 1000;
     }
     long currentRTT = (this.lastAckReceivedInMs - this.lastAckSentInMs);
     int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
@@ -202,7 +203,6 @@ public class Monitor implements Runnable {
     this.lastAckSentInMs = System.currentTimeMillis();
     this.rttLookUp.put(this.sequenceNumber, this.lastAckSentInMs);
     try {
-      System.out.println("Monitor sending heartbeat with epoch: " + eNonce + ", sequence number: " + sequenceNumber);
       socket.send(packet);
     } catch (Exception e) {
       System.out.println(e.getMessage());

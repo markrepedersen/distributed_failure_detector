@@ -11,7 +11,7 @@ public class MarkTesting {
         35321, "TestMonitor of localhost:" + 12345);
     // startMonitoring with a threshold of 6
     System.out.println("Starting monitoring.");
-    mon.startMonitoring(2);
+    mon.startMonitoring(10);
 
     // wait a maximum of 10 seconds for a failure
     fdQueue.poll(500, TimeUnit.SECONDS);
