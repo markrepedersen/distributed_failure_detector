@@ -163,10 +163,18 @@ public class Monitor implements Runnable {
   private int estimateRTT(long seqNum) {
     if (this.rttLookUp.containsKey(seqNum)) {
       long lastAckSentTime = this.rttLookUp.get(seqNum);
+
+      if (lastAckSentTime > this.lastAckReceivedInMs) {
+        this.lastAckReceivedInMs = 1000;
+      }
       long currentRTT = (this.lastAckReceivedInMs - lastAckSentTime);
       int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
       this.lastRoundTripTime = newRTT;
       return newRTT;
+    }
+
+    if (this.lastAckSentInMs > this.lastAckReceivedInMs) {
+      this.lastAckReceivedInMs = 1000;
     }
     long currentRTT = (this.lastAckReceivedInMs - this.lastAckSentInMs);
     int newRTT = Math.max(1, (int) Math.ceil((currentRTT + this.lastRoundTripTime) / 2));
