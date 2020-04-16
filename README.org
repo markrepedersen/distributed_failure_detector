@@ -1,0 +1,30 @@
+* Abstract
+An implementation of a distributed failure detection network. Starts up a series of nodes and a coordinator and is able to detect failures either in nodes or coordinators.
+
+* Usage
+Create a class such as the following:
+
+#+begin_src java
+public class TestNetwork {
+  public static void main(String[] args) throws Exception {
+    // Initialize and Create Monitor to send heartbeat messages
+    // Observe that we are going to monitor ourselves.
+    LinkedBlockingQueue<Monitor> fdQueue = Monitor.initializeMonitor(80085);
+    Monitor mon = new Monitor(InetAddress.getByName("this is your test IP address"), 0, InetAddress.getByName("this is your test hostname"),
+        35321, "TestMonitor of localhost:" + 12345);
+    // startMonitoring with a threshold of 6
+    System.out.println("Starting monitoring.");
+    mon.startMonitoring(10);
+
+    // wait a maximum of 10 seconds for a failure
+    fdQueue.poll(500, TimeUnit.SECONDS);
+  }
+}
+#+end_src
+
+Or look at `tester.java` for further examples.
+
+* Assumptions
+1. The interval between when a heartbeat is sent to a responder is approximately the average RTT
+calculated.
+2. Exceptions thrown inside a monitor will fail silently.
